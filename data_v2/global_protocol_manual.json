@@ -1,0 +1,726 @@
+{
+  "version": "manual",
+  "description": "Compact manually curated protocol for longitudinal ICU trajectory reasoning over MIMIC-IV and eICU. The protocol emphasizes high-coverage temporal physiological deterioration patterns aligned with intervention prediction tasks rather than universal clinical guidelines.",
+  "intended_use": {
+    "primary_task": "future intervention risk prediction (6h/12h)",
+    "communication_mode": "structured patient-state packets",
+    "state_dimensions": [
+      "hemodynamic_instability_score",
+      "respiratory_instability_score",
+      "renal_instability_score",
+      "metabolic_instability_score",
+      "systemic_inflammation_score"
+    ],
+    "note": "Protocol constraints guide persistent patient-state evolution rather than replace clinical reasoning."
+  },
+  "core_features": [
+    "hr",
+    "map",
+    "rr",
+    "spo2",
+    "temp",
+    "lactate",
+    "creatinine",
+    "wbc",
+    "sodium",
+    "potassium",
+    "bicarbonate",
+    "glucose"
+  ],
+  "rules": [
+    {
+      "rule_id": "SHOCK_01",
+      "name": "Lactate Rising Suggests Hypoperfusion",
+      "category": "shock_hemodynamic",
+      "trigger": [
+        {
+          "feature": "lactate",
+          "op": "trend_is",
+          "value": "rising",
+          "window_hours": 6,
+          "min_occurrences": 2
+        }
+      ],
+      "state_update": {
+        "hemodynamic_instability_score": {
+          "delta": 1.0,
+          "weight": 0.9
+        }
+      },
+      "risk": "shock_progression",
+      "severity": "high",
+      "relevant_targets": [
+        "vasopressor_signal",
+        "any_deterioration"
+      ],
+      "counterfactual_candidates": [
+        "fluid_resuscitation_bolus",
+        "lactate_clearance_targeting"
+      ]
+    },
+    {
+      "rule_id": "SHOCK_02",
+      "name": "Elevated Lactate",
+      "category": "shock_hemodynamic",
+      "trigger": [
+        {
+          "feature": "lactate",
+          "op": ">=",
+          "value": 2.0,
+          "window_hours": 6
+        }
+      ],
+      "state_update": {
+        "hemodynamic_instability_score": {
+          "delta": 1.0,
+          "weight": 0.8
+        }
+      },
+      "risk": "tissue_hypoperfusion",
+      "severity": "high",
+      "relevant_targets": [
+        "vasopressor_signal",
+        "any_deterioration"
+      ],
+      "counterfactual_candidates": [
+        "fluid_resuscitation_bolus",
+        "vasopressor_optimization"
+      ]
+    },
+    {
+      "rule_id": "SHOCK_03",
+      "name": "Low MAP",
+      "category": "shock_hemodynamic",
+      "trigger": [
+        {
+          "feature": "map",
+          "op": "<",
+          "value": 65,
+          "window_hours": 2,
+          "min_occurrences": 1
+        }
+      ],
+      "state_update": {
+        "hemodynamic_instability_score": {
+          "delta": 1.0,
+          "weight": 1.0
+        }
+      },
+      "risk": "hypotensive_hemodynamic_instability",
+      "severity": "high",
+      "relevant_targets": [
+        "vasopressor_signal",
+        "any_deterioration"
+      ],
+      "counterfactual_candidates": [
+        "fluid_resuscitation_bolus",
+        "vasopressor_optimization"
+      ]
+    },
+    {
+      "rule_id": "SHOCK_04",
+      "name": "Persistent Low MAP with Rising Lactate",
+      "category": "shock_hemodynamic",
+      "trigger": [
+        {
+          "feature": "map",
+          "op": "<",
+          "value": 65,
+          "window_hours": 6,
+          "min_occurrences": 2
+        },
+        {
+          "feature": "lactate",
+          "op": "trend_is",
+          "value": "rising",
+          "window_hours": 6,
+          "min_occurrences": 2
+        }
+      ],
+      "state_update": {
+        "hemodynamic_instability_score": {
+          "delta": 1.0,
+          "weight": 1.0
+        }
+      },
+      "risk": "progressive_shock_pattern",
+      "severity": "critical",
+      "relevant_targets": [
+        "vasopressor_signal",
+        "any_deterioration"
+      ],
+      "counterfactual_candidates": [
+        "fluid_resuscitation_bolus",
+        "vasopressor_optimization",
+        "perfusion_reassessment"
+      ]
+    },
+    {
+      "rule_id": "RESP_01",
+      "name": "Tachypnea",
+      "category": "respiratory",
+      "trigger": [
+        {
+          "feature": "rr",
+          "op": ">",
+          "value": 28,
+          "window_hours": 2,
+          "min_occurrences": 2
+        }
+      ],
+      "state_update": {
+        "respiratory_instability_score": {
+          "delta": 1.0,
+          "weight": 0.7
+        }
+      },
+      "risk": "respiratory_deterioration",
+      "severity": "medium",
+      "relevant_targets": [
+        "resp_support_signal",
+        "any_deterioration"
+      ],
+      "counterfactual_candidates": [
+        "oxygen_support_escalation"
+      ]
+    },
+    {
+      "rule_id": "RESP_02",
+      "name": "Persistent Respiratory Deterioration",
+      "category": "respiratory",
+      "trigger": [
+        {
+          "feature": "rr",
+          "op": "trend_is",
+          "value": "rising",
+          "window_hours": 6,
+          "min_occurrences": 2
+        }
+      ],
+      "state_update": {
+        "respiratory_instability_score": {
+          "delta": 1.0,
+          "weight": 0.8
+        }
+      },
+      "risk": "respiratory_failure_risk",
+      "severity": "high",
+      "relevant_targets": [
+        "resp_support_signal",
+        "any_deterioration"
+      ],
+      "counterfactual_candidates": [
+        "oxygen_support_escalation",
+        "respiratory_therapy"
+      ]
+    },
+    {
+      "rule_id": "RESP_03",
+      "name": "Hypoxemia",
+      "category": "respiratory",
+      "trigger": [
+        {
+          "feature": "spo2",
+          "op": "<",
+          "value": 90,
+          "window_hours": 2,
+          "min_occurrences": 2
+        }
+      ],
+      "state_update": {
+        "respiratory_instability_score": {
+          "delta": 1.0,
+          "weight": 0.9
+        }
+      },
+      "risk": "hypoxemic_respiratory_failure",
+      "severity": "high",
+      "relevant_targets": [
+        "resp_support_signal",
+        "any_deterioration"
+      ],
+      "counterfactual_candidates": [
+        "oxygen_support_escalation",
+        "ventilation_support"
+      ]
+    },
+    {
+      "rule_id": "RENAL_01",
+      "name": "Creatinine Rising",
+      "category": "renal",
+      "trigger": [
+        {
+          "feature": "creatinine",
+          "op": "trend_is",
+          "value": "rising",
+          "window_hours": 12,
+          "min_occurrences": 2
+        }
+      ],
+      "state_update": {
+        "renal_instability_score": {
+          "delta": 1.0,
+          "weight": 0.9
+        }
+      },
+      "risk": "aki_progression",
+      "severity": "high",
+      "relevant_targets": [
+        "renal_support_signal",
+        "any_deterioration"
+      ],
+      "counterfactual_candidates": [
+        "renal_dose_adjustment_and_fluid_review"
+      ]
+    },
+    {
+      "rule_id": "RENAL_02",
+      "name": "Elevated Creatinine",
+      "category": "renal",
+      "trigger": [
+        {
+          "feature": "creatinine",
+          "op": ">=",
+          "value": 1.5,
+          "window_hours": 12
+        }
+      ],
+      "state_update": {
+        "renal_instability_score": {
+          "delta": 1.0,
+          "weight": 0.7
+        }
+      },
+      "risk": "renal_dysfunction",
+      "severity": "medium",
+      "relevant_targets": [
+        "renal_support_signal",
+        "any_deterioration"
+      ],
+      "counterfactual_candidates": [
+        "renal_dose_adjustment_and_fluid_review"
+      ]
+    },
+    {
+      "rule_id": "INF_01",
+      "name": "Inflammatory Signal",
+      "category": "infection_sepsis_like",
+      "trigger": [
+        {
+          "feature": "wbc",
+          "op": "outside_range",
+          "value": [
+            4.0,
+            12.0
+          ],
+          "window_hours": 6
+        }
+      ],
+      "state_update": {
+        "systemic_inflammation_score": {
+          "delta": 1.0,
+          "weight": 0.7
+        }
+      },
+      "risk": "infection_progression",
+      "severity": "medium",
+      "relevant_targets": [
+        "any_deterioration"
+      ],
+      "counterfactual_candidates": [
+        "infection_workup_and_antimicrobial_review"
+      ]
+    },
+    {
+      "rule_id": "INF_02",
+      "name": "Inflammation with Hypoperfusion",
+      "category": "infection_sepsis_like",
+      "trigger": [
+        {
+          "feature": "wbc",
+          "op": "outside_range",
+          "value": [
+            4.0,
+            12.0
+          ],
+          "window_hours": 6
+        },
+        {
+          "feature": "lactate",
+          "op": ">=",
+          "value": 2.0,
+          "window_hours": 6
+        }
+      ],
+      "state_update": {
+        "systemic_inflammation_score": {
+          "delta": 1.0,
+          "weight": 0.8
+        },
+        "hemodynamic_instability_score": {
+          "delta": 1.0,
+          "weight": 0.8
+        }
+      },
+      "risk": "sepsis_like_deterioration",
+      "severity": "high",
+      "relevant_targets": [
+        "vasopressor_signal",
+        "any_deterioration"
+      ],
+      "counterfactual_candidates": [
+        "infection_workup_and_antimicrobial_review",
+        "fluid_resuscitation_bolus"
+      ]
+    },
+    {
+      "rule_id": "INF_03",
+      "name": "Fever with Inflammatory Burden",
+      "category": "infection_sepsis_like",
+      "trigger": [
+        {
+          "feature": "temp",
+          "op": ">=",
+          "value": 38.3,
+          "window_hours": 6,
+          "min_occurrences": 1
+        },
+        {
+          "feature": "wbc",
+          "op": "outside_range",
+          "value": [
+            4.0,
+            12.0
+          ],
+          "window_hours": 6
+        }
+      ],
+      "state_update": {
+        "systemic_inflammation_score": {
+          "delta": 1.0,
+          "weight": 0.9
+        },
+        "metabolic_instability_score": {
+          "delta": 1.0,
+          "weight": 0.5
+        }
+      },
+      "risk": "infection_with_systemic_inflammatory_response",
+      "severity": "high",
+      "relevant_targets": [
+        "any_deterioration"
+      ],
+      "counterfactual_candidates": [
+        "infection_workup_and_antimicrobial_review",
+        "temperature_source_control_review"
+      ]
+    },
+    {
+      "rule_id": "ELYTE_01",
+      "name": "Potassium Abnormal",
+      "category": "electrolyte_metabolic",
+      "trigger": [
+        {
+          "feature": "potassium",
+          "op": "outside_range",
+          "value": [
+            3.5,
+            5.5
+          ],
+          "window_hours": 6
+        }
+      ],
+      "state_update": {
+        "metabolic_instability_score": {
+          "delta": 1.0,
+          "weight": 0.9
+        }
+      },
+      "risk": "electrolyte_instability",
+      "severity": "high",
+      "relevant_targets": [
+        "any_deterioration"
+      ],
+      "counterfactual_candidates": [
+        "electrolyte_correction_protocol"
+      ]
+    },
+    {
+      "rule_id": "ELYTE_02",
+      "name": "Sodium Abnormal",
+      "category": "electrolyte_metabolic",
+      "trigger": [
+        {
+          "feature": "sodium",
+          "op": "outside_range",
+          "value": [
+            135,
+            145
+          ],
+          "window_hours": 6
+        }
+      ],
+      "state_update": {
+        "metabolic_instability_score": {
+          "delta": 1.0,
+          "weight": 0.6
+        }
+      },
+      "risk": "electrolyte_instability",
+      "severity": "medium",
+      "relevant_targets": [
+        "any_deterioration"
+      ],
+      "counterfactual_candidates": [
+        "electrolyte_correction_protocol"
+      ]
+    },
+    {
+      "rule_id": "MET_01",
+      "name": "Metabolic Acidosis Signal",
+      "category": "metabolic",
+      "trigger": [
+        {
+          "feature": "bicarbonate",
+          "op": "<",
+          "value": 22,
+          "window_hours": 6
+        }
+      ],
+      "state_update": {
+        "metabolic_instability_score": {
+          "delta": 1.0,
+          "weight": 0.8
+        }
+      },
+      "risk": "acidosis_or_metabolic_instability",
+      "severity": "high",
+      "relevant_targets": [
+        "any_deterioration"
+      ],
+      "counterfactual_candidates": [
+        "acid_base_correction_review"
+      ]
+    },
+    {
+      "rule_id": "MET_02",
+      "name": "Glycemic Instability",
+      "category": "metabolic",
+      "trigger": [
+        {
+          "feature": "glucose",
+          "op": "outside_range",
+          "value": [
+            70,
+            180
+          ],
+          "window_hours": 6
+        }
+      ],
+      "state_update": {
+        "metabolic_instability_score": {
+          "delta": 1.0,
+          "weight": 0.6
+        }
+      },
+      "risk": "glycemic_instability",
+      "severity": "medium",
+      "relevant_targets": [
+        "any_deterioration"
+      ],
+      "counterfactual_candidates": [
+        "glycemic_control_adjustment"
+      ]
+    },
+    {
+      "rule_id": "REC_01",
+      "name": "Hemodynamic Recovery Pattern",
+      "category": "recovery_decay",
+      "trigger": [
+        {
+          "feature": "map",
+          "op": ">=",
+          "value": 70,
+          "window_hours": 6,
+          "min_occurrences": 2
+        },
+        {
+          "feature": "lactate",
+          "op": "trend_is",
+          "value": "decreasing",
+          "window_hours": 6,
+          "min_occurrences": 2
+        }
+      ],
+      "state_update": {
+        "hemodynamic_instability_score": {
+          "delta": -1.0,
+          "weight": 0.9
+        }
+      },
+      "risk": "hemodynamic_recovery",
+      "severity": "low",
+      "relevant_targets": [
+        "vasopressor_signal",
+        "any_deterioration"
+      ],
+      "counterfactual_candidates": [
+        "deescalate_resuscitation_if_stable"
+      ]
+    },
+    {
+      "rule_id": "REC_02",
+      "name": "Respiratory Recovery Pattern",
+      "category": "recovery_decay",
+      "trigger": [
+        {
+          "feature": "spo2",
+          "op": ">=",
+          "value": 94,
+          "window_hours": 6,
+          "min_occurrences": 2
+        },
+        {
+          "feature": "rr",
+          "op": "<=",
+          "value": 24,
+          "window_hours": 6,
+          "min_occurrences": 2
+        }
+      ],
+      "state_update": {
+        "respiratory_instability_score": {
+          "delta": -1.0,
+          "weight": 0.8
+        }
+      },
+      "risk": "respiratory_recovery",
+      "severity": "low",
+      "relevant_targets": [
+        "resp_support_signal",
+        "any_deterioration"
+      ],
+      "counterfactual_candidates": [
+        "deescalate_oxygen_if_stable"
+      ]
+    },
+    {
+      "rule_id": "REC_03",
+      "name": "Renal Recovery Pattern",
+      "category": "recovery_decay",
+      "trigger": [
+        {
+          "feature": "creatinine",
+          "op": "trend_is",
+          "value": "decreasing",
+          "window_hours": 12,
+          "min_occurrences": 2
+        }
+      ],
+      "state_update": {
+        "renal_instability_score": {
+          "delta": -1.0,
+          "weight": 0.8
+        }
+      },
+      "risk": "renal_recovery",
+      "severity": "low",
+      "relevant_targets": [
+        "renal_support_signal",
+        "any_deterioration"
+      ],
+      "counterfactual_candidates": [
+        "continue_renal_supportive_care"
+      ]
+    },
+    {
+      "rule_id": "REC_04",
+      "name": "Metabolic Recovery Pattern",
+      "category": "recovery_decay",
+      "trigger": [
+        {
+          "feature": "bicarbonate",
+          "op": ">=",
+          "value": 22,
+          "window_hours": 6,
+          "min_occurrences": 2
+        },
+        {
+          "feature": "glucose",
+          "op": ">=",
+          "value": 70,
+          "window_hours": 6,
+          "min_occurrences": 2
+        },
+        {
+          "feature": "glucose",
+          "op": "<=",
+          "value": 180,
+          "window_hours": 6,
+          "min_occurrences": 2
+        }
+      ],
+      "state_update": {
+        "metabolic_instability_score": {
+          "delta": -1.0,
+          "weight": 0.7
+        }
+      },
+      "risk": "metabolic_recovery",
+      "severity": "low",
+      "relevant_targets": [
+        "any_deterioration"
+      ],
+      "counterfactual_candidates": [
+        "continue_metabolic_monitoring"
+      ]
+    },
+    {
+      "rule_id": "GEN_01",
+      "name": "Multi-domain Instability",
+      "category": "general_deterioration",
+      "trigger": [
+        {
+          "feature": "lactate",
+          "op": ">=",
+          "value": 2.0,
+          "window_hours": 6
+        },
+        {
+          "feature": "creatinine",
+          "op": ">=",
+          "value": 1.5,
+          "window_hours": 12
+        },
+        {
+          "feature": "rr",
+          "op": ">",
+          "value": 28,
+          "window_hours": 6
+        }
+      ],
+      "state_update": {
+        "hemodynamic_instability_score": {
+          "delta": 1.0,
+          "weight": 0.7
+        },
+        "renal_instability_score": {
+          "delta": 1.0,
+          "weight": 0.7
+        },
+        "respiratory_instability_score": {
+          "delta": 1.0,
+          "weight": 0.7
+        }
+      },
+      "risk": "general_deterioration",
+      "severity": "high",
+      "relevant_targets": [
+        "any_deterioration"
+      ],
+      "counterfactual_candidates": [
+        "combined_resuscitation_bundle"
+      ]
+    }
+  ]
+}

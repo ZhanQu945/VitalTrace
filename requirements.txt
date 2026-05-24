@@ -1,0 +1,16 @@
+torch
+transformers
+accelerate
+jinja2
+termcolor
+pandas
+numpy
+tqdm
+pyarrow
+scikit-learn
+sentence-transformers
+faiss-cpu
+vllm
+duckdb
+datasets
+evaluate
