@@ -37,9 +37,33 @@ pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-## Data Expectations
+## Data Access and Expectations
 
-Preprocessing expects MIMIC-IV/eICU style raw tables and mappings. Paths are passed explicitly via CLI or environment variables; no machine-specific paths are required.
+This repository does not include patient data.
+
+To run the full pipeline, you need authorized access to:
+- **MIMIC-IV** (PhysioNet credentialed access)
+- **eICU Collaborative Research Database** (PhysioNet credentialed access)
+
+Access pages:
+- MIMIC access FAQ: https://mimic.mit.edu/docs/faq/how-to-get-access.html
+- eICU access guide: https://eicu.mit.edu/gettingstarted/access/
+- PhysioNet project pages:
+  - https://physionet.org/content/mimiciv/
+  - https://physionet.org/content/eicu-crd/
+
+After access is approved, download/decompress the source tables into local folders (for example `./data/mimic` and `./data/eicu`) and pass those paths to preprocessing scripts through environment variables.
+
+Expected raw data are standard MIMIC/eICU relational tables used by:
+- `data/preprocess_longitudinal.py`
+- `src/preprocess_pipeline/signal_pipeline_stage1.py`
+- `src/preprocess_pipeline/signal_pipeline_stage2.py`
+
+The code assumes MIMIC/eICU-style column schemas (encounter IDs, timestamps, labs, vitals, medications, procedures, and mapping tables).
+
+Minimum expected source files include:
+- MIMIC-style tables such as admissions, patients, diagnoses/procedures ICD tables, prescriptions, labs, and item dictionaries.
+- eICU-style tables for patient/unit stay metadata, labs, vitals, medications, and procedures/treatments.
 
 ## Quick Start
 
@@ -48,6 +72,8 @@ Preprocessing expects MIMIC-IV/eICU style raw tables and mappings. Paths are pas
 ```bash
 export PROJECT_ROOT=$(pwd)
 export RUN_ROOT=$PROJECT_ROOT/runs
+export MIMIC_ROOT=$PROJECT_ROOT/data/mimic
+export EICU_ROOT=$PROJECT_ROOT/data/eicu
 mkdir -p "$RUN_ROOT"
 ```
 

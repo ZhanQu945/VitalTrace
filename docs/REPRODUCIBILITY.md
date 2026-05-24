@@ -2,6 +2,26 @@
 
 This document describes the full pipeline from raw data preprocessing to core experiments.
 
+## 0. Dataset Access
+
+Before running any script, obtain credentialed access to:
+- MIMIC-IV
+- eICU Collaborative Research Database
+
+Reference pages:
+- MIMIC access: https://mimic.mit.edu/docs/faq/how-to-get-access.html
+- eICU access: https://eicu.mit.edu/gettingstarted/access/
+- PhysioNet project pages:
+  - https://physionet.org/content/mimiciv/
+  - https://physionet.org/content/eicu-crd/
+
+Set local dataset roots before preprocessing:
+
+```bash
+export MIMIC_ROOT=/path/to/mimic
+export EICU_ROOT=/path/to/eicu
+```
+
 ## 1. Preprocessing Pipeline
 
 The preprocessing is staged and checkpointed.
