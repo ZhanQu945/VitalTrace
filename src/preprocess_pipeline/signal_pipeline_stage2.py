@@ -7,7 +7,7 @@ import time
 
 import pandas as pd
 
-from data_v2.preprocess_longitudinal import extract_mimic_labs, extract_mimic_vitals, extract_eicu_labs, extract_eicu_vitals
+from data.preprocess_longitudinal import extract_mimic_labs, extract_mimic_vitals, extract_eicu_labs, extract_eicu_vitals
 from src.preprocess_pipeline.signal_transition_common import CORE_FEATURES, canonical_feature, print_examples, print_stage_header, state_from_value
 
 

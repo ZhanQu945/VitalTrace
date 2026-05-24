@@ -11,7 +11,7 @@ from src.config.loader import load_config
 def main(config_path: str) -> None:
     cfg = load_config(config_path)
 
-    script = cfg.get("script", "data_v2/preprocess_longitudinal.py")
+    script = cfg.get("script", "data/preprocess_longitudinal.py")
     args = cfg.get("args", {})
     flags = cfg.get("flags", {})
 

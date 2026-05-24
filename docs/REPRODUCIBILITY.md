@@ -113,10 +113,3 @@ Reports:
 - aggregate counterfactual summaries.
 
 ---
-
-## 5. Aggregation
-
-Use:
-- `python scripts/experiments/collect_results.py --jobs-tsv <jobs.tsv> --out-csv <summary.csv>`
-
-The collector writes one row per experiment run with key predictive, calibration, protocol, counterfactual, and efficiency metrics.

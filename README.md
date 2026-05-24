@@ -17,7 +17,7 @@ It includes:
   - Stage 1-4 preprocessing for cohorting, signal filtering, transition construction, labeling, and sample selection.
 - `src/latent_pipeline/`
   - Multi-agent staged inference, baselines, prompts, metrics, counterfactual evaluation, and runners.
-- `data_v2/global_protocol_manual.json`
+- `data/global_protocol_manual.json`
   - Global protocol (manual curation).
 - `scripts/preprocess/`
   - Reproducible preprocessing entry scripts (local + Slurm templates).
@@ -63,14 +63,6 @@ bash scripts/preprocess/run_stage3_full1000_dual.sh
 
 ```bash
 bash scripts/experiments/run_mimic_experiments.sh
-```
-
-4. Collect metrics:
-
-```bash
-python scripts/experiments/collect_results.py \
-  --jobs-tsv runs/experiments/<RUN_TAG>/jobs.tsv \
-  --out-csv runs/experiments/<RUN_TAG>/summary_metrics.csv
 ```
 
 ## Notes

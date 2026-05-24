@@ -6,7 +6,7 @@ import os
 
 import pandas as pd
 
-from data_v2.preprocess_longitudinal import extract_mimic_meds, extract_mimic_procs, extract_eicu_meds, extract_eicu_procs
+from data.preprocess_longitudinal import extract_mimic_meds, extract_mimic_procs, extract_eicu_meds, extract_eicu_procs
 from src.preprocess_pipeline.signal_transition_common import TARGET_CONCEPTS, map_intervention, print_examples, print_stage_header
 
 

@@ -4,7 +4,7 @@ set -euo pipefail
 PROJECT_ROOT=${PROJECT_ROOT:-$(cd "$(dirname "$0")/../.." && pwd)}
 RUN_ROOT=${RUN_ROOT:-$PROJECT_ROOT/runs/preprocess}
 EXP_ROOT=${EXP_ROOT:-$PROJECT_ROOT/runs/experiments/mimic_$(date +%Y%m%d_%H%M%S)}
-PROTOCOL_JSON=${PROTOCOL_JSON:-$PROJECT_ROOT/data_v2/global_protocol_manual.json}
+PROTOCOL_JSON=${PROTOCOL_JSON:-$PROJECT_ROOT/data/global_protocol_manual.json}
 INPUT_JSONL=${INPUT_JSONL:-$RUN_ROOT/mimic_stage3_full1000/stage3_labeled_h6.jsonl}
 
 mkdir -p "$EXP_ROOT/configs" "$EXP_ROOT"
