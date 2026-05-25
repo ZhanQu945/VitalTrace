@@ -91,6 +91,17 @@ bash scripts/preprocess/run_stage3_full1000_dual.sh
 bash scripts/experiments/run_mimic_experiments.sh
 ```
 
+4. Collect experiment metrics into one CSV:
+
+```bash
+export EXPERIMENTS_ROOT=$RUN_ROOT/experiments
+bash scripts/experiments/run_collect_results.sh
+```
+
+This writes a summary table (including calibrated F1/ECE, per-target metrics, temporal metrics, protocol metrics, and efficiency metrics) to `experiments/collection/results_summary.csv`.
+If your results are stored elsewhere, set `EXPERIMENTS_ROOT=/path/to/your/experiments` (or `RESULTS_ROOT`) before running.
+If `RUN_ROOT` is set, the collector output defaults to `$RUN_ROOT/collection/results_summary.csv`.
+
 ## Notes
 
 - No patient data is included.
