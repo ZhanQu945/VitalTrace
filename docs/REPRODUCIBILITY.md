@@ -100,7 +100,7 @@ Config fields:
 - `runtime`: agent backend, max rules, runner mode, retry/fail policy, ablation switch
 - `model`: model id + decoding/input limits
 
-## Single-LLM and Learning Baselines
+## Single-LLM Baselines
 
 Runner:
 - `python -m src.latent_pipeline.run_baselines --help`

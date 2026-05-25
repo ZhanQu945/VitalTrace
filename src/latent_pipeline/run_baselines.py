@@ -269,7 +269,7 @@ def _run_single_llm_agent(examples: List[Dict], model_id: str, max_new_tokens: i
         cr_v = _to_float(cr.get("value_last"), None)
         lc_v = _to_float(lc.get("value_last"), None)
 
-        # Conservative fallback (avoid all-positive collapse in tiny debug sets).
+        # Conservative fallback (avoid all-positive collapse in very small subsets).
         vaso = 0.10
         if map_v is not None and map_v < 55:
             vaso = 0.75

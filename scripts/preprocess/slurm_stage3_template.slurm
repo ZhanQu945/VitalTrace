@@ -1,7 +1,7 @@
 #!/bin/bash
-#SBATCH --job-name=vitaltrace-s3-full1000
-#SBATCH --time=04:00:00
-#SBATCH --gres=gpu:1
+#SBATCH --job-name=vitaltrace-s3
+#SBATCH --time=148:00:00
+#SBATCH --gres=gpu:4
 #SBATCH --nodes=1
 #SBATCH --cpus-per-task=14
 #SBATCH --mem=180G

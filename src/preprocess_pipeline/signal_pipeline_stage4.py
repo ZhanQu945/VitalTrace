@@ -40,11 +40,11 @@ def main():
     ap.add_argument("--full-core-mode", choices=["all_steps", "any_step"], default="all_steps")
     ap.add_argument("--full-core-fallback", action="store_true")
     ap.add_argument("--top-k", type=int, default=5)
-    ap.add_argument("--export-latent-debug-jsonl", action="store_true")
+    ap.add_argument("--export-latent-jsonl", action="store_true")
     args = ap.parse_args()
 
     os.makedirs(args.out_dir, exist_ok=True)
-    print_stage_header(f"STAGE 4 ({args.dataset}): Debug Subset Sampling")
+    print_stage_header(f"STAGE 4 ({args.dataset}): Subset Sampling")
 
     steps = read_jsonl(args.stage3_steps)
     lab = read_jsonl(args.stage3_labeled_main)
@@ -154,8 +154,8 @@ def main():
     write_jsonl(lab_s, out_lab)
     rank_df.to_csv(out_rank, index=False)
 
-    out_latent_debug = None
-    if args.export_latent_debug_jsonl:
+    out_latent_jsonl = None
+    if args.export_latent_jsonl:
         # Export a latent-pipeline-compatible JSONL using step snapshots as protocol_observations.
         obs_features = [
             "map", "rr", "spo2", "creatinine", "lactate",
@@ -169,8 +169,8 @@ def main():
             (r["source_dataset"], r["patient_id"], r["encounter_id"], int(r.get("step_id", 0))): r.get("targets", {})
             for _, r in lab_s.iterrows()
         }
-        out_latent_debug = os.path.join(args.out_dir, "stage4_sample_for_latent_debug.jsonl")
-        with open(out_latent_debug, "w") as f:
+        out_latent_jsonl = os.path.join(args.out_dir, "stage4_sample_for_latent.jsonl")
+        with open(out_latent_jsonl, "w") as f:
             for k, rows in by_key.items():
                 prev_vals = {}
                 for row in rows:
@@ -218,7 +218,7 @@ def main():
         "eligible_encounters_before_filter": eligible_enc_before,
         "eligible_encounters_after_filter": eligible_enc_after,
         "ranked_csv": out_rank,
-        "latent_debug_jsonl": out_latent_debug,
+        "latent_jsonl": out_latent_jsonl,
     }
     with open(out_summary, "w") as f:
         json.dump(summary, f, indent=2)
@@ -231,8 +231,8 @@ def main():
     print(f"saved: {out_steps}")
     print(f"saved: {out_lab}")
     print(f"saved: {out_rank}")
-    if out_latent_debug:
-        print(f"saved: {out_latent_debug}")
+    if out_latent_jsonl:
+        print(f"saved: {out_latent_jsonl}")
     print(f"saved: {out_summary}")
 
 

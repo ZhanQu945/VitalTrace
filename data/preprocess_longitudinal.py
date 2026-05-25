@@ -1222,7 +1222,7 @@ def build_qc_report(events: pd.DataFrame, protocol_features: pd.DataFrame, horiz
             cf_rates[h] = round(cf_nonempty / n, 6)
     qc["label_prevalence_by_horizon"] = label_prev
     qc["counterfactual_nonempty_rate_by_horizon"] = cf_rates
-    # Lightweight gates to quickly decide if pilot is usable for staged latent-agent testing.
+    # Lightweight gates to quickly decide if a run is usable for staged latent-agent inference.
     gates = {}
     if not protocol_features.empty:
         cov = qc.get("core_feature_coverage_rate", {})

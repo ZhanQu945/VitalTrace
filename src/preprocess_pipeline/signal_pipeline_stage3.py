@@ -388,7 +388,7 @@ def encounter_rank_from_stage2(
     *,
     top_k: int,
 ) -> pd.DataFrame:
-    """Rank encounters for debug quality using only stage2 outputs."""
+    """Rank encounters for sample quality using only stage2 outputs."""
     if top_k <= 0:
         return cohort_df.iloc[0:0].copy()
 
@@ -589,7 +589,7 @@ def main():
         ev = ev.merge(key_df, on=KEY_COLS, how="inner")
         print(f"[stats] events after los_mode encounter join: {len(ev):,}")
 
-        # Simplified debug mode: select top-k encounters directly from stage2 signals/interventions.
+        # Simplified selection mode: select top-k encounters directly from stage2 signals/interventions.
         if args.simplified_top_k > 0:
             ranked_all = encounter_rank_from_stage2(c, ev, top_k=max(int(args.simplified_top_k) * 50, 200))
             need_k = int(args.simplified_top_k)

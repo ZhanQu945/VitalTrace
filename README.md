@@ -7,7 +7,7 @@ This repository contains the implementation for the paper:
 It includes:
 - signal-centric longitudinal preprocessing (MIMIC-IV and eICU style schemas),
 - staged multi-agent inference (Router/Reasoner/Auditor/Steward),
-- single-LLM and learning baselines,
+- single-LLM baselines,
 - evaluation utilities (overall, calibration, temporal, protocol, counterfactual, efficiency),
 - the manually curated global protocol used by Vital Trace.
 
@@ -82,13 +82,15 @@ mkdir -p "$RUN_ROOT"
 ```bash
 bash scripts/preprocess/run_stage1_dual.sh
 bash scripts/preprocess/run_stage2_dual.sh
-bash scripts/preprocess/run_stage3_full1000_dual.sh
+bash scripts/preprocess/run_stage3_dual.sh
 ```
 
 3. Run staged experiments:
 
 ```bash
 bash scripts/experiments/run_mimic_experiments.sh
+# optional: select a configured backbone key
+# MODEL_KEY=<key> bash scripts/experiments/run_mimic_experiments.sh
 ```
 
 4. Collect experiment metrics into one CSV:
