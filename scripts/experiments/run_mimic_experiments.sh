@@ -55,6 +55,7 @@ runtime:
   agent_backend: llm
   max_rules: 3
   runner_mode: temporal_loop
+  reuse_stage_outputs: false
   max_audit_retries: 1
   fail_policy: conservative_continue
   ablation: none
@@ -67,6 +68,14 @@ YAML
 
 python -m src.latent_pipeline.run_staged_from_config --config "$CFG_PATH"
 python -m src.latent_pipeline.evaluate_staged --out-dir "$OUT_DIR" --protocol-json "$PROTOCOL_JSON"
-python -m src.latent_pipeline.counterfactual_runner --out-dir "$OUT_DIR" --protocol-json "$PROTOCOL_JSON"
+python -m src.latent_pipeline.counterfactual_runner \
+  --out-dir "$OUT_DIR" \
+  --protocol-json "$PROTOCOL_JSON" \
+  --agent-backend llm \
+  --llm-model-id "$LLM_MODEL_ID" \
+  --llm-max-new-tokens "$LLM_MAX_NEW_TOKENS" \
+  --llm-temperature 0.1 \
+  --llm-max-input-tokens "$LLM_MAX_INPUT_TOKENS" \
+  --max-rules 3
 
 echo "saved experiment outputs in: $OUT_DIR"

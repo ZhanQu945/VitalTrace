@@ -4,6 +4,10 @@ import time
 from typing import Dict, List
 
 from src.latent_pipeline.common import iter_jsonl, write_jsonl, write_json, log
+from src.latent_pipeline.inference_context import (
+    INFERENCE_CONTEXT_SCHEMA,
+    build_inference_packet,
+)
 from src.latent_pipeline.protocol_utils import load_protocol, feature_map_from_facts, rule_score
 from src.latent_pipeline.prompts import router_system_prompt, router_user_prompt
 
@@ -41,12 +45,11 @@ def run(input_jsonl: str, protocol_path: str, output_jsonl: str, metrics_json: s
     for ex in iter_jsonl(input_jsonl):
         n_seen += 1
         facts = ex.get("protocol_observations", [])
-        packet = {
-            "facts": facts,
-            "latent_state": ex.get("latent_state_current", {}),
-            "risk_targets": ex.get("targets", {}),
-            "counterfactual_candidates": ex.get("counterfactual_candidates", []),
-        }
+        packet = build_inference_packet(
+            facts=facts,
+            latent_state=ex.get("latent_state_current", {}),
+            counterfactual_candidates=ex.get("counterfactual_candidates", []),
+        )
 
         if llm is None:
             sel, active = _det_router(rules, facts, max_rules)
@@ -86,6 +89,8 @@ def run(input_jsonl: str, protocol_path: str, output_jsonl: str, metrics_json: s
             "encounter_id": ex.get("encounter_id"),
             "anchor_time": ex.get("anchor_time"),
             "counterfactual_candidates": ex.get("counterfactual_candidates", []),
+            "inference_context_schema": INFERENCE_CONTEXT_SCHEMA,
+            "target_isolation_verified": True,
             "packet": packet,
             "selected_rule_ids": sel,
             "active_rules": active,
@@ -106,7 +111,7 @@ def run(input_jsonl: str, protocol_path: str, output_jsonl: str, metrics_json: s
     pred_gt_rows = [{"example_id": r.get("example_id"), "source_dataset": r.get("source_dataset"), "patient_id": r.get("patient_id"), "encounter_id": r.get("encounter_id"), "anchor_time": r.get("anchor_time"), "stage1_prediction": r.get("stage1_prediction", {}), "stage1_ground_truth": r.get("stage1_ground_truth", {})} for r in rows]
     write_jsonl(pred_gt_path, pred_gt_rows)
     n = len(rows)
-    write_json(metrics_json, {"n_examples": n, "selection_rate": (with_selection / n) if n else 0.0, "avg_high_severity_selected": (severity_high / n) if n else 0.0, "agent_backend": agent_backend, "llm_model_id": llm_model_id if llm else None, "llm_calls": int(getattr(llm, "_calls", 0)) if llm else 0, "llm_failures": int(getattr(llm, "_failures", 0)) if llm else 0})
+    write_json(metrics_json, {"n_examples": n, "selection_rate": (with_selection / n) if n else 0.0, "avg_high_severity_selected": (severity_high / n) if n else 0.0, "agent_backend": agent_backend, "llm_model_id": llm_model_id if llm else None, "llm_calls": int(getattr(llm, "_calls", 0)) if llm else 0, "llm_failures": int(getattr(llm, "_failures", 0)) if llm else 0, "inference_context_schema": INFERENCE_CONTEXT_SCHEMA, "target_isolation_verified": True})
     log(f"Router stage done: n={n}")
 
 

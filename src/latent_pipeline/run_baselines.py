@@ -11,9 +11,15 @@ import torch.optim as optim
 
 from src.latent_pipeline.common import iter_jsonl, log, write_json, write_jsonl
 from src.latent_pipeline.llm_backend import LLMBackend, LLMConfig
+from src.latent_pipeline.prediction_targets import (
+    COMPOSITE_TARGET,
+    SUPPORT_TARGETS,
+    add_composite_probability,
+)
 from src.latent_pipeline.protocol_utils import feature_map_from_facts, load_protocol, rule_score
 
-LABELS = ["vasopressor_signal", "resp_support_signal", "renal_support_signal", "any_deterioration"]
+SUPPORT_LABELS = list(SUPPORT_TARGETS)
+LABELS = SUPPORT_LABELS + [COMPOSITE_TARGET]
 FEATURES = ["map", "lactate", "spo2", "rr", "creatinine", "wbc", "bicarbonate", "sodium", "potassium", "glucose", "hr", "sbp"]
 
 
@@ -126,6 +132,8 @@ def _build_stage_rows(examples: List[Dict], probs_by_id: Dict[str, Dict[str, flo
             "anchor_time": ex.get("anchor_time"),
             "step_id": int(ex.get("step_id", 0) or 0),
             "packet": {"facts": facts},
+            "target_isolation_verified": True,
+            "inference_context_schema": "target_free_v1",
             "selected_rule_ids": selected,
             "active_rules": active,
             "ground_truth_targets": ex.get("targets", {}),
@@ -153,6 +161,7 @@ def _build_stage_rows(examples: List[Dict], probs_by_id: Dict[str, Dict[str, flo
                 "next_bundle_type": "Mixed",
                 "predicted_actions": actions,
                 "risk_probs": probs,
+                "any_deterioration_definition": "max_support_probability",
                 "citations": selected,
                 "counterfactual_notes": [],
                 "baseline": baseline_name,
@@ -174,15 +183,16 @@ def _build_stage_rows(examples: List[Dict], probs_by_id: Dict[str, Dict[str, flo
         pkey = f"{ex.get('source_dataset')}_{ex.get('patient_id')}_{ex.get('encounter_id')}"
         prev = patient_state.get(
             pkey,
-            {"hemodynamic_state": 0, "respiratory_state": 0, "renal_state": 0, "metabolic_state": 0, "active_protocol_prediction": []},
+            {"hemodynamic_state": 0, "respiratory_state": 0, "renal_state": 0, "metabolic_state": 0, "systemic_inflammation_state": 0, "active_protocol_prediction": []},
         )
         nxt = dict(prev)
         nxt["hemodynamic_state"] = int(max(0, min(5, prev["hemodynamic_state"] + int(probs["vasopressor_signal"] >= 0.5))))
         nxt["respiratory_state"] = int(max(0, min(5, prev["respiratory_state"] + int(probs["resp_support_signal"] >= 0.5))))
         nxt["renal_state"] = int(max(0, min(5, prev["renal_state"] + int(probs["renal_support_signal"] >= 0.5))))
         nxt["metabolic_state"] = int(max(0, min(5, prev["metabolic_state"] + int(probs["any_deterioration"] >= 0.5))))
+        nxt["systemic_inflammation_state"] = int(prev["systemic_inflammation_state"])
         nxt["active_protocol_prediction"] = selected
-        delta = {k: int(nxt[k]) - int(prev[k]) for k in ["hemodynamic_state", "respiratory_state", "renal_state", "metabolic_state"]}
+        delta = {k: int(nxt[k]) - int(prev[k]) for k in ["hemodynamic_state", "respiratory_state", "renal_state", "metabolic_state", "systemic_inflammation_state"]}
         patient_state[pkey] = nxt
         s4.append(
             {
@@ -225,7 +235,6 @@ def _run_single_llm_agent(examples: List[Dict], model_id: str, max_new_tokens: i
             "vasopressor_signal": ["vasopressor_signal", "vaso", "vaso_signal", "vasopressor", "hemodynamic_risk"],
             "resp_support_signal": ["resp_support_signal", "resp", "resp_signal", "respiratory_support_signal", "respiratory_risk"],
             "renal_support_signal": ["renal_support_signal", "renal", "renal_signal", "renal_risk"],
-            "any_deterioration": ["any_deterioration", "deterioration", "overall_risk", "global_risk"],
         }
         out: Dict[str, float] = {}
         for canonical, keys in aliases.items():
@@ -247,12 +256,7 @@ def _run_single_llm_agent(examples: List[Dict], model_id: str, max_new_tokens: i
                 except Exception:
                     continue
             out[canonical] = float(np.clip(_to_float(val, 0.0), 0.0, 1.0))
-        # Keep canonical consistency: any_deterioration >= max(other three) when absent.
-        if "any_deterioration" not in out and any(k in out for k in ["vasopressor_signal", "resp_support_signal", "renal_support_signal"]):
-            out["any_deterioration"] = float(
-                max(out.get("vasopressor_signal", 0.0), out.get("resp_support_signal", 0.0), out.get("renal_support_signal", 0.0))
-            )
-        return out
+        return add_composite_probability(out)
 
     def _heuristic_probs(ex: Dict) -> Dict[str, float]:
         facts = ex.get("protocol_observations", [])
@@ -269,7 +273,7 @@ def _run_single_llm_agent(examples: List[Dict], model_id: str, max_new_tokens: i
         cr_v = _to_float(cr.get("value_last"), None)
         lc_v = _to_float(lc.get("value_last"), None)
 
-        # Conservative fallback (avoid all-positive collapse in very small subsets).
+        # Conservative fallback (avoid all-positive collapse in tiny debug sets).
         vaso = 0.10
         if map_v is not None and map_v < 55:
             vaso = 0.75
@@ -334,9 +338,9 @@ def _run_single_llm_agent(examples: List[Dict], model_id: str, max_new_tokens: i
                 "Task: predict near-term intervention risk probabilities from current facts.\n"
                 "Return exactly these keys with numeric values in [0,1]:\n"
                 "{\"vasopressor_signal\":0.0,\"resp_support_signal\":0.0,"
-                "\"renal_support_signal\":0.0,\"any_deterioration\":0.0}\n"
+                "\"renal_support_signal\":0.0}\n"
                 "Rules:\n"
-                "- any_deterioration >= max(vasopressor_signal, resp_support_signal, renal_support_signal)\n"
+                "- any_deterioration is computed downstream as the maximum of these three values.\n"
                 "- If data suggests instability, do not set all risks to 0.\n"
                 "- vasopressor: low MAP / rising lactate.\n"
                 "- respiratory: low SpO2 / high RR.\n"
@@ -353,14 +357,13 @@ def _run_single_llm_agent(examples: List[Dict], model_id: str, max_new_tokens: i
                 "{"
                 "\"vasopressor_signal\": <float 0..1>,"
                 "\"resp_support_signal\": <float 0..1>,"
-                "\"renal_support_signal\": <float 0..1>,"
-                "\"any_deterioration\": <float 0..1>"
+                "\"renal_support_signal\": <float 0..1>"
                 "}\n"
                 "Clinical cues:\n"
                 "- vasopressor_signal: low MAP, perfusion concerns, rising lactate\n"
                 "- resp_support_signal: low SpO2, high RR\n"
                 "- renal_support_signal: elevated/rising creatinine\n"
-                "- any_deterioration should be >= max(other three)\n"
+                "- any_deterioration is computed downstream as the maximum of these three values\n"
                 f"patient_facts={facts}\n"
             )
         out = {}
@@ -373,16 +376,16 @@ def _run_single_llm_agent(examples: List[Dict], model_id: str, max_new_tokens: i
                     base_prompt
                     + "Your previous output was invalid or incomplete. "
                     + "Return ONLY this JSON with numeric values:\n"
-                    + "{\"vasopressor_signal\":0.0,\"resp_support_signal\":0.0,\"renal_support_signal\":0.0,\"any_deterioration\":0.0}\n"
+                    + "{\"vasopressor_signal\":0.0,\"resp_support_signal\":0.0,\"renal_support_signal\":0.0}\n"
                 )
             out = llm.generate_json(system_prompt, prompt)
             risk_blob = _normalize_risk_blob(out if isinstance(out, dict) else {})
-            if isinstance(risk_blob, dict) and any(k in risk_blob for k in LABELS):
+            if isinstance(risk_blob, dict) and any(k in risk_blob for k in SUPPORT_LABELS):
                 break
         row = {}
         for k in LABELS:
             row[k] = float(np.clip(_to_float(risk_blob.get(k), 0.0), 0.0, 1.0))
-        valid_blob = isinstance(risk_blob, dict) and any(k in risk_blob for k in LABELS)
+        valid_blob = isinstance(risk_blob, dict) and any(k in risk_blob for k in SUPPORT_LABELS)
         if valid_blob:
             n_llm_valid += 1
         if all(float(row[k]) == 0.0 for k in LABELS):
@@ -420,7 +423,7 @@ def _run_retain_style(examples: List[Dict], epochs: int, lr: float, hidden_dim: 
         return (str(exx.get("source_dataset")), str(exx.get("patient_id")))
 
     input_dim = len(_step_vector(examples[0])) if examples else 1
-    model = RetainLike(input_dim=input_dim, hidden_dim=hidden_dim, out_dim=len(LABELS))
+    model = RetainLike(input_dim=input_dim, hidden_dim=hidden_dim, out_dim=len(SUPPORT_LABELS))
     opt = optim.Adam(model.parameters(), lr=lr)
     crit = nn.BCEWithLogitsLoss()
 
@@ -433,7 +436,7 @@ def _run_retain_style(examples: List[Dict], epochs: int, lr: float, hidden_dim: 
         xs, ys = [], []
         for i in range(len(seq)):
             xs.append(_step_vector(seq[i]))
-            ys.append([_to_float(seq[i].get("targets", {}).get(k, 0), 0.0) for k in LABELS])
+            ys.append([_to_float(seq[i].get("targets", {}).get(k, 0), 0.0) for k in SUPPORT_LABELS])
             x_t = torch.tensor(np.stack(xs), dtype=torch.float32).unsqueeze(0)
             y_t = torch.tensor(ys[-1], dtype=torch.float32).unsqueeze(0)
             if p in tr:
@@ -476,7 +479,7 @@ def _run_retain_style(examples: List[Dict], epochs: int, lr: float, hidden_dim: 
                 x_t = torch.tensor(np.stack(xs), dtype=torch.float32).unsqueeze(0)
                 p = torch.sigmoid(model(x_t)).squeeze(0).cpu().numpy()
                 p = np.nan_to_num(p, nan=0.0, posinf=1.0, neginf=0.0)
-                probs[_example_id(ex)] = {k: float(np.clip(p[i], 0.0, 1.0)) for i, k in enumerate(LABELS)}
+                probs[_example_id(ex)] = add_composite_probability({k: float(np.clip(p[i], 0.0, 1.0)) for i, k in enumerate(SUPPORT_LABELS)})
     split_info = {
         "n_patients_total": int(n),
         "n_patients_train": int(len(tr)),
@@ -505,7 +508,7 @@ def _run_retain_v2(examples: List[Dict], epochs: int, lr: float, hidden_dim: int
         return (str(exx.get("source_dataset")), str(exx.get("patient_id")))
 
     input_dim = len(_step_vector(examples[0])) if examples else 1
-    model = RetainV2(input_dim=input_dim, embed_dim=embed_dim, hidden_dim=hidden_dim, out_dim=len(LABELS), dropout=dropout)
+    model = RetainV2(input_dim=input_dim, embed_dim=embed_dim, hidden_dim=hidden_dim, out_dim=len(SUPPORT_LABELS), dropout=dropout)
     opt = optim.Adam(model.parameters(), lr=lr, weight_decay=wd)
     crit = nn.BCEWithLogitsLoss()
 
@@ -517,7 +520,7 @@ def _run_retain_v2(examples: List[Dict], epochs: int, lr: float, hidden_dim: int
         xs, ys = [], []
         for i in range(len(seq)):
             xs.append(_step_vector(seq[i]))
-            ys.append([_to_float(seq[i].get("targets", {}).get(k, 0), 0.0) for k in LABELS])
+            ys.append([_to_float(seq[i].get("targets", {}).get(k, 0), 0.0) for k in SUPPORT_LABELS])
             x_t = torch.tensor(np.stack(xs), dtype=torch.float32).unsqueeze(0)
             y_t = torch.tensor(ys[-1], dtype=torch.float32).unsqueeze(0)
             if p in tr:
@@ -570,7 +573,7 @@ def _run_retain_v2(examples: List[Dict], epochs: int, lr: float, hidden_dim: int
                 x_t = torch.tensor(np.stack(xs), dtype=torch.float32).unsqueeze(0)
                 p = torch.sigmoid(model(x_t)).squeeze(0).cpu().numpy()
                 p = np.nan_to_num(p, nan=0.0, posinf=1.0, neginf=0.0)
-                probs[_example_id(ex)] = {k: float(np.clip(p[i], 0.0, 1.0)) for i, k in enumerate(LABELS)}
+                probs[_example_id(ex)] = add_composite_probability({k: float(np.clip(p[i], 0.0, 1.0)) for i, k in enumerate(SUPPORT_LABELS)})
     split_info = {
         "n_patients_total": int(n),
         "n_patients_train": int(len(tr)),

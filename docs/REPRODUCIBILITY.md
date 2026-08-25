@@ -78,6 +78,13 @@ Outputs:
 - `stage3_labeled_h12.jsonl`
 - `stage3_summary.json`
 
+The labeled files contain future-horizon targets for evaluation. Agent context is
+constructed through an explicit allowlist: targets and other future-derived fields
+remain in evaluation records but are excluded from Router, Reasoner, Auditor, and
+Steward prompts. Prompt construction fails fast if a forbidden field is detected.
+Corrected run rows and metrics are marked with
+`inference_context_schema: target_free_v1` and `target_isolation_verified: true`.
+
 ## Stage 4: Sample Export (optional)
 
 Purpose:
@@ -99,6 +106,9 @@ Config fields:
 - `io`: input JSONL, output dir, protocol JSON
 - `runtime`: agent backend, max rules, runner mode, retry/fail policy, ablation switch
 - `model`: model id + decoding/input limits
+
+Stage-output reuse is disabled by default. If explicitly enabled, every reused
+packet is checked for target leakage before execution continues.
 
 ## Single-LLM Baselines
 
@@ -125,11 +135,16 @@ Main outputs in each experiment directory:
 ## 4. Counterfactual Evaluation
 
 Utility:
-- `python -m src.latent_pipeline.counterfactual_runner --out-dir <dir> --protocol-json <path>`
+- `python -m src.latent_pipeline.counterfactual_runner --out-dir <dir> --protocol-json <path> --agent-backend llm --llm-model-id <same-model-as-main-run>`
 
 Reports:
-- directional consistency,
+- directional consistency under four standardized recovery perturbations,
 - protocol activation change under perturbation,
 - aggregate counterfactual summaries.
+
+The runner reruns the configured inference model; it does not use heuristic risk
+scores or consecutive observed steps as counterfactuals. See
+`docs/EVALUATION_INTEGRITY.md` for the endpoint, state, bootstrap, and artifact
+provenance definitions.
 
 ---

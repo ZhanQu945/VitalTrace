@@ -6,6 +6,7 @@ import os
 
 from src.config.loader import load_config
 from src.latent_pipeline.common import iter_jsonl, write_jsonl
+from src.latent_pipeline.inference_context import assert_no_future_fields
 from src.latent_pipeline.temporal_loop_runner import run as run_temporal_loop
 from src.latent_pipeline.stage1_router import run as run_stage1
 from src.latent_pipeline.stage2_reasoner import run as run_stage2
@@ -29,7 +30,7 @@ def main(config_path: str) -> None:
     max_audit_retries = int(runtime.get("max_audit_retries", 1))
     fail_policy = str(runtime.get("fail_policy", "conservative_continue"))
     ablation = str(runtime.get("ablation", "none")).lower()
-    reuse_stage_outputs = bool(runtime.get("reuse_stage_outputs", True))
+    reuse_stage_outputs = bool(runtime.get("reuse_stage_outputs", False))
 
     s1 = f"{io['out_dir']}/stage1_router.jsonl"
     s2 = f"{io['out_dir']}/stage2_reasoner.jsonl"
@@ -44,6 +45,13 @@ def main(config_path: str) -> None:
             json.dump({}, f)
     if ablation == "no_router":
         max_rules = 0
+
+    def _validate_reused_stage(path: str) -> None:
+        for row_number, ex in enumerate(iter_jsonl(path), start=1):
+            assert_no_future_fields(
+                ex.get("packet", {}),
+                f"reused stage packet {path}:{row_number}",
+            )
 
     def _make_pass_through_auditor(in_jsonl: str, out_jsonl: str):
         rows = []
@@ -61,6 +69,7 @@ def main(config_path: str) -> None:
                 "respiratory_state": 0,
                 "renal_state": 0,
                 "metabolic_state": 0,
+                "systemic_inflammation_state": 0,
                 "active_protocol_prediction": [],
             }
             ex["individual_protocol_state_prev"] = dict(zero)
@@ -70,6 +79,7 @@ def main(config_path: str) -> None:
                 "respiratory_state": 0,
                 "renal_state": 0,
                 "metabolic_state": 0,
+                "systemic_inflammation_state": 0,
             }
             ex["stage4_prediction"] = {"state_next": dict(zero), "state_delta": ex["individual_protocol_state_delta"], "ablation": "no_memory"}
             rows.append(ex)
@@ -96,28 +106,36 @@ def main(config_path: str) -> None:
         m4 = f"{io['out_dir']}/metrics_steward.json"
 
         if reuse_stage_outputs and os.path.exists(s1):
-            pass
+            _validate_reused_stage(s1)
         else:
             run_stage1(io["input_jsonl"], protocol_json, s1, m1, max_rules=max_rules, agent_backend=agent_backend, llm_model_id=llm_model_id, llm_max_new_tokens=llm_max_new_tokens, llm_temperature=llm_temperature, llm_max_input_tokens=llm_max_input_tokens)
 
         if reuse_stage_outputs and os.path.exists(s2):
-            pass
+            _validate_reused_stage(s2)
         else:
             run_stage2(s1, s2, m2, agent_backend=agent_backend, llm_model_id=llm_model_id, llm_max_new_tokens=llm_max_new_tokens, llm_temperature=llm_temperature, llm_max_input_tokens=llm_max_input_tokens)
 
         if ablation == "no_auditor":
             if not (reuse_stage_outputs and os.path.exists(s3)):
                 _make_pass_through_auditor(s2, s3)
+            else:
+                _validate_reused_stage(s3)
         else:
             if not (reuse_stage_outputs and os.path.exists(s3)):
                 run_stage3(s2, s3, m3, agent_backend=agent_backend, llm_model_id=llm_model_id, llm_max_new_tokens=llm_max_new_tokens, llm_temperature=llm_temperature, llm_max_input_tokens=llm_max_input_tokens)
+            else:
+                _validate_reused_stage(s3)
 
         if ablation == "no_memory":
             if not (reuse_stage_outputs and os.path.exists(s4)):
                 _make_no_memory_steward(s3, s4)
+            else:
+                _validate_reused_stage(s4)
         else:
             if not (reuse_stage_outputs and os.path.exists(s4)):
                 run_stage4(s3, s4, m4, agent_backend=agent_backend, llm_model_id=llm_model_id, llm_max_new_tokens=llm_max_new_tokens, llm_temperature=llm_temperature, llm_max_input_tokens=llm_max_input_tokens)
+            else:
+                _validate_reused_stage(s4)
 
 
 if __name__ == "__main__":

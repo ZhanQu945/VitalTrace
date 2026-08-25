@@ -1,6 +1,8 @@
 import json
 from typing import Dict, List, Optional
 
+from src.latent_pipeline.inference_context import assert_no_future_fields
+
 
 def _to_json(obj: Dict) -> str:
     return json.dumps(obj, ensure_ascii=True, sort_keys=True)
@@ -15,6 +17,7 @@ def router_system_prompt() -> str:
 
 
 def router_user_prompt(packet: Dict, rules_brief: List[Dict], max_rules: int) -> str:
+    assert_no_future_fields(packet, "Router prompt packet")
     return (
         "Task: pick up to {max_rules} rule_ids that best match current clinical facts.\\n"
         "Output JSON schema:\\n"
@@ -41,6 +44,7 @@ def reasoner_system_prompt() -> str:
 
 
 def reasoner_user_prompt(packet: Dict, selected_rule_ids: List[str], active_rules: Dict) -> str:
+    assert_no_future_fields(packet, "Reasoner prompt packet")
     return (
         "Task: produce next-step intervention reasoning.\\n"
         "Output JSON schema:\\n"
@@ -54,6 +58,7 @@ def reasoner_user_prompt(packet: Dict, selected_rule_ids: List[str], active_rule
         "Constraints:\\n"
         "- Probabilities in [0,1]\\n"
         "- citations subset of selected_rule_ids\\n"
+        "- Predict only the three support probabilities; any_deterioration is computed downstream as their maximum\\n"
         "- Keep actions concise and clinically plausible\\n"
         "- Use active rules and patient facts; do not invent unsupported conditions\\n\\n"
         "packet={packet_json}\\n"
@@ -80,6 +85,13 @@ def auditor_user_prompt(
     individual_protocol_state_prev: Optional[Dict] = None,
     facts_current: Optional[List[Dict]] = None,
 ) -> str:
+    audit_context = {
+        "active_rules": active_rules,
+        "reasoner_prediction": reasoner_prediction,
+        "individual_protocol_state_prev": individual_protocol_state_prev or {},
+        "facts_current": facts_current or [],
+    }
+    assert_no_future_fields(audit_context, "Auditor prompt context")
     return (
         "Task: audit consistency. The pipeline deterministically adjudicates final PASS/FAIL; your output is auxiliary evidence for issue tags and suggested fixes.\\n"
         "Output JSON schema:\\n"
@@ -110,12 +122,19 @@ def steward_system_prompt() -> str:
 
 
 def steward_user_prompt(prev_state: Dict, reasoner_prediction: Dict, audit: Dict, active_rule_ids: List[str]) -> str:
+    steward_context = {
+        "individual_protocol_state_prev": prev_state or {},
+        "reasoner_prediction": reasoner_prediction or {},
+        "audit": audit or {},
+        "active_rule_ids": active_rule_ids or [],
+    }
+    assert_no_future_fields(steward_context, "Steward prompt context")
     return (
         "Task: update patient state vector.\\n"
         "Output JSON schema:\\n"
         "{{"
-        "\"state_next\":{{\"hemodynamic_state\":0,\"respiratory_state\":0,\"renal_state\":0,\"metabolic_state\":0,\"active_protocol_prediction\":[\"rule_id\"]}},"
-        "\"state_delta\":{{\"hemodynamic_state\":0,\"respiratory_state\":0,\"renal_state\":0,\"metabolic_state\":0}},"
+        "\"state_next\":{{\"hemodynamic_state\":0,\"respiratory_state\":0,\"renal_state\":0,\"metabolic_state\":0,\"systemic_inflammation_state\":0,\"active_protocol_prediction\":[\"rule_id\"]}},"
+        "\"state_delta\":{{\"hemodynamic_state\":0,\"respiratory_state\":0,\"renal_state\":0,\"metabolic_state\":0,\"systemic_inflammation_state\":0}},"
         "\"notes\":[\"...\"],"
         "\"confidence\":0.0"
         "}}\\n"

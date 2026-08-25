@@ -3,7 +3,8 @@ from typing import Dict, List, Tuple
 
 
 def load_protocol(path: str) -> Dict:
-    obj = json.load(open(path, "r"))
+    with open(path, "r") as f:
+        obj = json.load(f)
     if isinstance(obj, dict) and "rules" in obj:
         rules = {r["rule_id"]: r for r in obj["rules"]}
     elif isinstance(obj, dict):

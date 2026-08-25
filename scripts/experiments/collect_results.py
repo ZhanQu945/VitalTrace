@@ -61,10 +61,14 @@ def collect_one(out_dir: str) -> Dict[str, Any] | None:
     overall = read_json(os.path.join(out_dir, "metrics_overall.json"))
     if not overall:
         return None
+    if overall.get("evaluation_schema") != "corrected_evaluation_v2":
+        return None
 
     cal = read_json(os.path.join(out_dir, "calibrated_metrics.json"))
     stg = read_json(os.path.join(out_dir, "stagewise_metrics.json"))
     cf = read_json(os.path.join(out_dir, "counterfactual_metrics.json"))
+    if cf.get("evaluation_method") != "standardized_recovery_model_rerun_v2":
+        cf = {}
     temporal = read_json(os.path.join(out_dir, "temporal_metrics.json"))
     pcons = read_json(os.path.join(out_dir, "protocol_consistency_metrics.json"))
     eff = read_json(os.path.join(out_dir, "efficiency_metrics.json"))
@@ -104,6 +108,8 @@ def collect_one(out_dir: str) -> Dict[str, Any] | None:
         "macro_auprc": overall.get("macro_auprc"),
         "macro_auprc_ci_low": auprc_l,
         "macro_auprc_ci_high": auprc_u,
+        "bootstrap_replicates": overall.get("bootstrap_replicates"),
+        "bootstrap_sampling": overall.get("bootstrap_sampling"),
         "micro_f1": overall.get("micro_f1"),
         "micro_ece": overall.get("micro_ece"),
         "micro_brier": overall.get("micro_brier"),
@@ -117,6 +123,7 @@ def collect_one(out_dir: str) -> Dict[str, Any] | None:
         "recall_at_12h": temporal.get("recall_at_12h"),
         "lead_time_h_mean": temporal.get("lead_time_h_mean"),
         "directional_consistency_rate": cf.get("directional_consistency_rate"),
+        "counterfactual_evaluation_method": cf.get("evaluation_method"),
         "rule_violation_rate": pcons.get("rule_violation_rate"),
         "rule_activation_precision": pcons.get("rule_activation_precision"),
         "rule_activation_recall": pcons.get("rule_activation_recall"),
@@ -161,4 +168,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

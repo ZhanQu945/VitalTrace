@@ -8,6 +8,14 @@ from collections import defaultdict
 from typing import Any, Dict, List, Tuple
 
 from src.latent_pipeline.common import iter_jsonl, log, write_json, write_jsonl
+from src.latent_pipeline.inference_context import (
+    INFERENCE_CONTEXT_SCHEMA,
+    build_inference_packet,
+)
+from src.latent_pipeline.prediction_targets import (
+    COMPOSITE_DEFINITION,
+    add_composite_probability,
+)
 from src.latent_pipeline.prompts import (
     auditor_system_prompt,
     auditor_user_prompt,
@@ -21,7 +29,7 @@ from src.latent_pipeline.prompts import (
 from src.latent_pipeline.protocol_utils import feature_map_from_facts, load_protocol, rule_score
 from src.latent_pipeline.stage2_reasoner import _deterministic_plan
 from src.latent_pipeline.stage3_auditor import _det_audit
-from src.latent_pipeline.stage4_steward import _state_delta, _update_state
+from src.latent_pipeline.stage4_steward import STATE_KEYS, _state_delta, _update_state
 
 
 def _to_float(x: Any, default: float | None = None) -> float | None:
@@ -129,7 +137,6 @@ def _run_reasoner(llm, packet: Dict[str, Any], selected_rule_ids: List[str], act
         "vasopressor_signal": ["vasopressor_signal", "vaso", "vaso_signal", "vasopressor", "hemodynamic_risk"],
         "resp_support_signal": ["resp_support_signal", "resp", "resp_signal", "respiratory_support_signal", "respiratory_risk"],
         "renal_support_signal": ["renal_support_signal", "renal", "renal_signal", "renal_risk"],
-        "any_deterioration": ["any_deterioration", "deterioration", "overall_risk", "global_risk"],
     }
     risk_norm: Dict[str, float] = {}
     if isinstance(raw_risk, dict):
@@ -152,14 +159,12 @@ def _run_reasoner(llm, packet: Dict[str, Any], selected_rule_ids: List[str], act
                     continue
             vv = _to_float(v, 0.0)
             risk_norm[canonical] = float(max(0.0, min(1.0, float(vv if vv is not None else 0.0))))
-    if "any_deterioration" not in risk_norm and any(k in risk_norm for k in ["vasopressor_signal", "resp_support_signal", "renal_support_signal"]):
-        risk_norm["any_deterioration"] = float(
-            max(risk_norm.get("vasopressor_signal", 0.0), risk_norm.get("resp_support_signal", 0.0), risk_norm.get("renal_support_signal", 0.0))
-        )
+    risk_norm = add_composite_probability(risk_norm)
     pred = {
         "next_bundle_type": out.get("next_bundle_type", "Mixed"),
         "predicted_actions": out.get("predicted_actions", [])[:5],
         "risk_probs": risk_norm,
+        "any_deterioration_definition": COMPOSITE_DEFINITION,
         "citations": [r for r in out.get("citations", []) if r in set(selected_rule_ids)],
         "counterfactual_notes": out.get("counterfactual_notes", []),
         "rationale": out.get("rationale", ""),
@@ -204,7 +209,7 @@ def _run_steward(
     selected_rule_ids: List[str],
 ) -> Tuple[Dict[str, Any], Dict[str, int]]:
     if llm is None:
-        nxt = _update_state(prev, reasoner_prediction, audit)
+        nxt = _update_state(prev, reasoner_prediction, audit, selected_rule_ids)
         return nxt, _state_delta(prev, nxt)
 
     out = llm.generate_json(
@@ -212,9 +217,9 @@ def _run_steward(
         steward_user_prompt(prev or {}, reasoner_prediction, audit, selected_rule_ids),
     )
     nxt = out.get("state_next", {})
-    keys = ["hemodynamic_state", "respiratory_state", "renal_state", "metabolic_state"]
+    keys = STATE_KEYS
     if not all(k in nxt for k in keys):
-        nxt = _update_state(prev, reasoner_prediction, audit)
+        nxt = _update_state(prev, reasoner_prediction, audit, selected_rule_ids)
         return nxt, _state_delta(prev, nxt)
 
     for k in keys:
@@ -290,15 +295,14 @@ def run(
             extra_retry_feedback: List[str] = []
 
             while True:
-                packet = {
-                    "facts": facts,
-                    "latent_state": ex.get("latent_state_current", {}),
-                    "risk_targets": ex.get("targets", {}),
-                    "counterfactual_candidates": ex.get("counterfactual_candidates", []),
-                    "individual_protocol_state_prev": prev_state or {},
-                    "previous_audit_summary": prev_audit or {},
-                    "audit_retry_feedback": extra_retry_feedback,
-                }
+                packet = build_inference_packet(
+                    facts=facts,
+                    latent_state=ex.get("latent_state_current", {}),
+                    counterfactual_candidates=ex.get("counterfactual_candidates", []),
+                    individual_protocol_state_prev=prev_state,
+                    previous_audit_summary=prev_audit,
+                    audit_retry_feedback=extra_retry_feedback,
+                )
 
                 sel, active = _run_router(llm, rules, rules_brief, packet, facts, max_rules=max_rules)
                 pred = _run_reasoner(llm, packet, sel, active)
@@ -376,6 +380,8 @@ def run(
                 "encounter_id": ex.get("encounter_id"),
                 "anchor_time": ex.get("anchor_time"),
                 "counterfactual_candidates": ex.get("counterfactual_candidates", []),
+                "inference_context_schema": INFERENCE_CONTEXT_SCHEMA,
+                "target_isolation_verified": True,
                 "packet": final["packet"],
                 "selected_rule_ids": final["selected_rule_ids"],
                 "active_rules": final["active_rules"],
@@ -555,6 +561,8 @@ def run(
         "llm_model_id": llm_model_id if llm else None,
         "llm_calls": int(getattr(llm, "_calls", 0)) if llm else 0,
         "llm_failures": int(getattr(llm, "_failures", 0)) if llm else 0,
+        "inference_context_schema": INFERENCE_CONTEXT_SCHEMA,
+        "target_isolation_verified": True,
     }
     write_json(os.path.join(out_dir, "metrics_temporal_loop.json"), metrics)
 

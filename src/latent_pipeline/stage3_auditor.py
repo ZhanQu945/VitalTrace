@@ -3,6 +3,10 @@ import os
 import time
 
 from src.latent_pipeline.common import iter_jsonl, write_jsonl, write_json, log
+from src.latent_pipeline.inference_context import (
+    INFERENCE_CONTEXT_SCHEMA,
+    assert_no_future_fields,
+)
 from src.latent_pipeline.prompts import auditor_system_prompt, auditor_user_prompt
 
 
@@ -83,6 +87,7 @@ def run(input_jsonl: str, output_jsonl: str, metrics_json: str, agent_backend: s
         n_seen += 1
         det = _det_audit(ex.get("active_rules", {}), ex.get("reasoner_prediction", {}))
         packet = ex.get("packet", {}) if isinstance(ex.get("packet", {}), dict) else {}
+        assert_no_future_fields(packet, "Auditor input packet")
         indiv_prev = ex.get("individual_protocol_state_prev", packet.get("individual_protocol_state_prev", {}))
         facts_current = packet.get("facts", [])
         if llm is not None:
@@ -112,6 +117,8 @@ def run(input_jsonl: str, output_jsonl: str, metrics_json: str, agent_backend: s
 
         fail += int(audit["status"] == "FAIL")
         ex["audit"] = audit
+        ex["inference_context_schema"] = INFERENCE_CONTEXT_SCHEMA
+        ex["target_isolation_verified"] = True
         ex["auditor_inputs"] = {
             "individual_protocol_state_prev": indiv_prev or {},
             "n_facts_current": len(facts_current or []),
@@ -128,7 +135,7 @@ def run(input_jsonl: str, output_jsonl: str, metrics_json: str, agent_backend: s
     pred_gt_rows = [{"example_id": r.get("example_id"), "source_dataset": r.get("source_dataset"), "patient_id": r.get("patient_id"), "encounter_id": r.get("encounter_id"), "anchor_time": r.get("anchor_time"), "stage3_prediction": r.get("stage3_prediction", {}), "stage3_ground_truth": r.get("stage3_ground_truth", {})} for r in rows]
     write_jsonl(pred_gt_path, pred_gt_rows)
     n = len(rows)
-    write_json(metrics_json, {"n_examples": n, "fail_rate": (fail / n) if n else 0.0, "agent_backend": agent_backend, "llm_model_id": llm_model_id if llm else None, "llm_calls": int(getattr(llm, "_calls", 0)) if llm else 0, "llm_failures": int(getattr(llm, "_failures", 0)) if llm else 0})
+    write_json(metrics_json, {"n_examples": n, "fail_rate": (fail / n) if n else 0.0, "agent_backend": agent_backend, "llm_model_id": llm_model_id if llm else None, "llm_calls": int(getattr(llm, "_calls", 0)) if llm else 0, "llm_failures": int(getattr(llm, "_failures", 0)) if llm else 0, "inference_context_schema": INFERENCE_CONTEXT_SCHEMA, "target_isolation_verified": True})
     log(f"Auditor stage done: n={n}")
 
 

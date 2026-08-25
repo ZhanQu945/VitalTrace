@@ -10,15 +10,23 @@ import pandas as pd
 from sklearn.metrics import average_precision_score, brier_score_loss, f1_score, precision_score, recall_score, roc_auc_score
 
 from src.latent_pipeline.common import iter_jsonl, write_json
+from src.latent_pipeline.prediction_targets import add_composite_label, add_composite_probability
 from src.latent_pipeline.protocol_utils import load_protocol, feature_map_from_facts, rule_score
 
 LABELS = ["vasopressor_signal", "resp_support_signal", "renal_support_signal", "any_deterioration"]
-STATE_KEYS = ["hemodynamic_state", "respiratory_state", "renal_state", "metabolic_state"]
+STATE_KEYS = [
+    "hemodynamic_state",
+    "respiratory_state",
+    "renal_state",
+    "metabolic_state",
+    "systemic_inflammation_state",
+]
 RISK_STATE_TO_TARGET = {
     "hemodynamic_state": "vasopressor_signal",
     "respiratory_state": "resp_support_signal",
     "renal_state": "renal_support_signal",
     "metabolic_state": "any_deterioration",
+    "systemic_inflammation_state": "any_deterioration",
 }
 COMMON_STAGE_FIELDS = {
     "record_id",
@@ -33,6 +41,8 @@ COMMON_STAGE_FIELDS = {
     "active_rules",
     "ground_truth_targets",
     "counterfactual_candidates",
+    "inference_context_schema",
+    "target_isolation_verified",
     "protocol_observations",
     "router_output",
     "reasoner_prediction",
@@ -151,7 +161,23 @@ def _safe_metrics_block(y_true: np.ndarray, y_score: np.ndarray) -> Dict[str, Op
     return out
 
 
-def _bootstrap_patient_ci(pred_df: pd.DataFrame, n_boot: int = 200, seed: int = 13) -> Dict[str, Optional[List[float]]]:
+def _resample_patient_rows(
+    pred_df: pd.DataFrame,
+    patient_key: pd.Series,
+    sampled_patient_keys: List[str],
+) -> pd.DataFrame:
+    """Concatenate sampled patient clusters while preserving multiplicity."""
+    groups = {
+        key: pred_df.loc[patient_key == key]
+        for key in patient_key.unique().tolist()
+    }
+    return pd.concat(
+        [groups[key] for key in sampled_patient_keys],
+        ignore_index=True,
+    )
+
+
+def _bootstrap_patient_ci(pred_df: pd.DataFrame, n_boot: int = 1000, seed: int = 13) -> Dict[str, Optional[List[float]]]:
     if pred_df.empty:
         return {"macro_auroc_95ci": None, "macro_auprc_95ci": None, "macro_f1_95ci": None}
 
@@ -164,8 +190,7 @@ def _bootstrap_patient_ci(pred_df: pd.DataFrame, n_boot: int = 200, seed: int = 
     m_aurocs, m_auprcs, m_f1s = [], [], []
     for _ in range(n_boot):
         sampled = rng.choice(uniq, size=len(uniq), replace=True)
-        idx = np.isin(patient_key, sampled)
-        bdf = pred_df.loc[idx]
+        bdf = _resample_patient_rows(pred_df, patient_key, sampled.tolist())
         if bdf.empty:
             continue
         au_l, ap_l, f1_l = [], [], []
@@ -197,6 +222,9 @@ def _bootstrap_patient_ci(pred_df: pd.DataFrame, n_boot: int = 200, seed: int = 
         "macro_auroc_95ci": _ci(m_aurocs),
         "macro_auprc_95ci": _ci(m_auprcs),
         "macro_f1_95ci": _ci(m_f1s),
+        "bootstrap_replicates": int(n_boot),
+        "bootstrap_unit": "patient",
+        "bootstrap_sampling": "clusters_with_replacement_preserving_multiplicity",
     }
 
 
@@ -470,7 +498,7 @@ def _compute_stability_and_recovery(s4: List[Dict]) -> Tuple[Dict, Dict]:
         k = (str(o.get("source_dataset")), str(o.get("patient_id")), str(o.get("encounter_id")))
         by_traj.setdefault(k, []).append(o)
 
-    dim_keys = ["hemodynamic_state", "respiratory_state", "renal_state", "metabolic_state"]
+    dim_keys = STATE_KEYS
     stability = {}
     recovery = {}
 
@@ -668,22 +696,7 @@ def _calibrate_thresholds(pred_df: pd.DataFrame, seed: int = 13, calib_frac: flo
     }
 
 
-def _expected_direction_from_cf(cands: List[Dict]) -> Dict[str, int]:
-    # -1 means expected risk decrease, +1 increase, 0 unknown
-    d = {"vasopressor_signal": 0, "resp_support_signal": 0, "renal_support_signal": 0}
-    for c in cands or []:
-        txt = str(c.get("action", "")).lower()
-        risk = str(c.get("target_risk", "")).lower()
-        if "vasopressor" in txt or "shock" in risk or "hypoperfusion" in risk:
-            d["vasopressor_signal"] = -1
-        if "oxygen" in txt or "respiratory" in risk or "ventilation" in txt:
-            d["resp_support_signal"] = -1
-        if "renal" in txt or "aki" in risk or "dialysis" in txt:
-            d["renal_support_signal"] = -1
-    return d
-
-
-def run(out_dir: str, protocol_json: Optional[str] = None):
+def run(out_dir: str, protocol_json: Optional[str] = None, bootstrap_replicates: int = 1000):
     s1_path = os.path.join(out_dir, "stage1_router.jsonl")
     s2_path = os.path.join(out_dir, "stage2_reasoner.jsonl")
     s3_path = os.path.join(out_dir, "stage3_auditor.jsonl")
@@ -694,16 +707,29 @@ def run(out_dir: str, protocol_json: Optional[str] = None):
     s3 = [o for o in iter_jsonl(s3_path)]
     s4 = [o for o in iter_jsonl(s4_path)]
 
+    if any(not row.get("target_isolation_verified", False) for row in s1 + s2 + s3 + s4):
+        raise ValueError(
+            "Evaluation requires target-free corrected stage outputs; rerun inference first."
+        )
+    if any(
+        row.get("reasoner_prediction", {}).get("any_deterioration_definition")
+        != "max_support_probability"
+        for row in s2
+    ):
+        raise ValueError(
+            "Evaluation requires the three-support-plus-max-composite endpoint schema."
+        )
+
     n = len(s2)
     rows = []
     y = {k: [] for k in LABELS}
     p = {k: [] for k in LABELS}
 
     for o in s2:
-        gt = o.get("stage2_ground_truth", {})
+        gt = add_composite_label(o.get("stage2_ground_truth", {}))
         pred = o.get("reasoner_prediction", {})
         proxy = o.get("stage2_prediction", {})
-        rp = pred.get("risk_probs", {})
+        rp = add_composite_probability(pred.get("risk_probs", {}))
 
         rec = {
             "record_id": o.get("record_id"),
@@ -772,8 +798,10 @@ def run(out_dir: str, protocol_json: Optional[str] = None):
         "micro_specificity": _safe_specificity(y_flat, p_flat) if len(y_flat) else None,
         "micro_brier": float(brier_score_loss(y_flat, p_flat)) if len(y_flat) else None,
         "micro_ece": _ece(y_flat, p_flat) if len(y_flat) else None,
+        "prediction_endpoint_schema": "three_support_plus_max_composite_v1",
+        "evaluation_schema": "corrected_evaluation_v2",
     }
-    overall.update(_bootstrap_patient_ci(pred_df))
+    overall.update(_bootstrap_patient_ci(pred_df, n_boot=bootstrap_replicates))
 
     # per-label threshold calibration on held-out patient subset
     cal = _calibrate_thresholds(pred_df, seed=13, calib_frac=0.2)
@@ -890,52 +918,6 @@ def run(out_dir: str, protocol_json: Optional[str] = None):
             required_fields=["example_id", "individual_protocol_state_prev", "individual_protocol_state_next", "individual_protocol_state_delta"],
             known_fields=COMMON_STAGE_FIELDS,
         ),
-    }
-
-    # counterfactual consistency (proxy)
-    dir_checks = []
-    avg_prob_changes = {"vasopressor_signal": [], "resp_support_signal": [], "renal_support_signal": []}
-    proto_activation_changed = []
-    state_change_flags = []
-
-    s2_map = {(o.get("record_id"), o.get("example_id")): o for o in s2}
-    s4_map = {(o.get("record_id"), o.get("example_id")): o for o in s4}
-
-    # compare each step with next step in same trajectory as a proxy natural counterfactual progression
-    by_traj = {}
-    for o in s2:
-        key = (o.get("source_dataset"), o.get("patient_id"), o.get("encounter_id"))
-        by_traj.setdefault(key, []).append(o)
-
-    for _, seq in by_traj.items():
-        seq = sorted(seq, key=lambda x: (str(x.get("anchor_time", "")), int(x.get("step_id", 0))))
-        for i in range(len(seq) - 1):
-            a = seq[i]
-            b = seq[i + 1]
-            cf_cands = a.get("counterfactual_candidates", None)
-            if cf_cands is None:
-                cf_cands = a.get("packet", {}).get("counterfactual_candidates", [])
-            exp_dir = _expected_direction_from_cf(cf_cands or [])
-            pa = a.get("reasoner_prediction", {}).get("risk_probs", {})
-            pb = b.get("reasoner_prediction", {}).get("risk_probs", {})
-            for lab in ["vasopressor_signal", "resp_support_signal", "renal_support_signal"]:
-                da = float(pb.get(lab, a.get("stage2_prediction", {}).get(lab, 0))) - float(pa.get(lab, a.get("stage2_prediction", {}).get(lab, 0)))
-                avg_prob_changes[lab].append(da)
-                if exp_dir.get(lab, 0) != 0:
-                    dir_checks.append(int(np.sign(da) == exp_dir[lab]))
-
-            proto_activation_changed.append(int(set(a.get("selected_rule_ids", [])) != set(b.get("selected_rule_ids", []))))
-
-            s4a = s4_map.get((a.get("record_id"), a.get("example_id")), {})
-            delta = s4a.get("individual_protocol_state_delta", {})
-            state_change_flags.append(int(any(int(delta.get(k, 0)) != 0 for k in STATE_KEYS)))
-
-    cf = {
-        "directional_consistency_rate": float(np.mean(dir_checks)) if dir_checks else None,
-        "avg_probability_change": {k: (float(np.mean(v)) if v else None) for k, v in avg_prob_changes.items()},
-        "protocol_activation_change_rate": float(np.mean(proto_activation_changed)) if proto_activation_changed else None,
-        "individual_state_change_rate": float(np.mean(state_change_flags)) if state_change_flags else None,
-        "n_directional_checks": int(len(dir_checks)),
     }
 
     # temporal early-warning on major labels
@@ -1170,7 +1152,6 @@ def run(out_dir: str, protocol_json: Optional[str] = None):
     os.makedirs(out_dir, exist_ok=True)
     write_json(os.path.join(out_dir, "metrics_overall.json"), overall)
     write_json(os.path.join(out_dir, "stagewise_metrics.json"), stagewise)
-    write_json(os.path.join(out_dir, "counterfactual_metrics.json"), cf)
     write_json(os.path.join(out_dir, "temporal_metrics.json"), temporal)
     write_json(os.path.join(out_dir, "event_level_metrics.json"), event_level)
     write_json(os.path.join(out_dir, "risk_state_metrics.json"), risk_state)
@@ -1193,5 +1174,6 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--out-dir", required=True)
     ap.add_argument("--protocol-json", default=None)
+    ap.add_argument("--bootstrap-replicates", type=int, default=1000)
     args = ap.parse_args()
-    run(args.out_dir, args.protocol_json)
+    run(args.out_dir, args.protocol_json, args.bootstrap_replicates)

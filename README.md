@@ -109,3 +109,5 @@ If `RUN_ROOT` is set, the collector output defaults to `$RUN_ROOT/collection/res
 - No patient data is included.
 - All scripts are path-configurable.
 - For exact paper protocol, use `docs/REPRODUCIBILITY.md`.
+- For corrected endpoint, state, counterfactual, and bootstrap definitions, use
+  `docs/EVALUATION_INTEGRITY.md`.

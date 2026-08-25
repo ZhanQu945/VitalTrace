@@ -4,6 +4,14 @@ import time
 from typing import Dict, List
 
 from src.latent_pipeline.common import iter_jsonl, write_jsonl, write_json, log
+from src.latent_pipeline.inference_context import (
+    INFERENCE_CONTEXT_SCHEMA,
+    assert_no_future_fields,
+)
+from src.latent_pipeline.prediction_targets import (
+    COMPOSITE_DEFINITION,
+    add_composite_probability,
+)
 from src.latent_pipeline.prompts import reasoner_system_prompt, reasoner_user_prompt
 
 
@@ -29,7 +37,8 @@ def _deterministic_plan(packet: Dict, selected_rule_ids: List[str]) -> Dict:
     if not actions:
         actions.append("continue close monitoring and reassessment")
 
-    return {"next_bundle_type": "Mixed", "predicted_actions": actions[:5], "risk_probs": {"vasopressor_signal": float(any("vasopressor" in a.lower() for a in actions)), "resp_support_signal": float(any(("respiratory" in a.lower()) or ("oxygen" in a.lower()) for a in actions)), "renal_support_signal": float(any(("renal" in a.lower()) or ("aki" in a.lower()) for a in actions))}, "citations": selected_rule_ids, "counterfactual_notes": []}
+    risk_probs = add_composite_probability({"vasopressor_signal": float(any("vasopressor" in a.lower() for a in actions)), "resp_support_signal": float(any(("respiratory" in a.lower()) or ("oxygen" in a.lower()) for a in actions)), "renal_support_signal": float(any(("renal" in a.lower()) or ("aki" in a.lower()) for a in actions))})
+    return {"next_bundle_type": "Mixed", "predicted_actions": actions[:5], "risk_probs": risk_probs, "any_deterioration_definition": COMPOSITE_DEFINITION, "citations": selected_rule_ids, "counterfactual_notes": []}
 
 
 def run(input_jsonl: str, output_jsonl: str, metrics_json: str, agent_backend: str = "deterministic", llm_model_id: str = "meta-llama/Llama-3.1-8B-Instruct", llm_max_new_tokens: int = 256, llm_temperature: float = 0.1, llm_max_input_tokens: int = 3072):
@@ -46,19 +55,22 @@ def run(input_jsonl: str, output_jsonl: str, metrics_json: str, agent_backend: s
 
     for ex in iter_jsonl(input_jsonl):
         n_seen += 1
+        packet = ex.get("packet", {})
+        assert_no_future_fields(packet, "Reasoner input packet")
         if llm is None:
-            pred = _deterministic_plan(ex.get("packet", {}), ex.get("selected_rule_ids", []))
+            pred = _deterministic_plan(packet, ex.get("selected_rule_ids", []))
         else:
-            out = llm.generate_json(reasoner_system_prompt(), reasoner_user_prompt(ex.get("packet", {}), ex.get("selected_rule_ids", []), ex.get("active_rules", {})))
+            out = llm.generate_json(reasoner_system_prompt(), reasoner_user_prompt(packet, ex.get("selected_rule_ids", []), ex.get("active_rules", {})))
             pred = {
                 "next_bundle_type": out.get("next_bundle_type", "Mixed"),
                 "predicted_actions": out.get("predicted_actions", [])[:5],
-                "risk_probs": out.get("risk_probs", {}),
+                "risk_probs": add_composite_probability(out.get("risk_probs", {})),
+                "any_deterioration_definition": COMPOSITE_DEFINITION,
                 "citations": [r for r in out.get("citations", []) if r in set(ex.get("selected_rule_ids", []))],
                 "counterfactual_notes": out.get("counterfactual_notes", []),
             }
             if not pred["predicted_actions"]:
-                pred = _deterministic_plan(ex.get("packet", {}), ex.get("selected_rule_ids", []))
+                pred = _deterministic_plan(packet, ex.get("selected_rule_ids", []))
 
         gt = ex.get("ground_truth_targets", {})
         acts_text = " ".join(pred.get("predicted_actions", [])).lower()
@@ -71,7 +83,7 @@ def run(input_jsonl: str, output_jsonl: str, metrics_json: str, agent_backend: s
             any_action += 1
 
         pred_proxy = {"vasopressor_signal": vaso_pred, "resp_support_signal": resp_pred, "renal_support_signal": renal_pred, "any_deterioration": int(vaso_pred or resp_pred or renal_pred)}
-        rows.append({**ex, "reasoner_prediction": pred, "stage2_prediction": pred_proxy, "stage2_ground_truth": gt})
+        rows.append({**ex, "inference_context_schema": INFERENCE_CONTEXT_SCHEMA, "target_isolation_verified": True, "reasoner_prediction": pred, "stage2_prediction": pred_proxy, "stage2_ground_truth": gt})
         if n_seen % progress_every == 0:
             dt = max(1e-6, time.time() - t0)
             log(f"Reasoner progress: {n_seen} rows ({n_seen/dt:.2f} rows/s), llm_failures={int(getattr(llm, '_failures', 0)) if llm else 0}")
@@ -91,7 +103,7 @@ def run(input_jsonl: str, output_jsonl: str, metrics_json: str, agent_backend: s
     } for r in rows]
     write_jsonl(pred_gt_path, pred_gt_rows)
     n = len(rows)
-    write_json(metrics_json, {"n_examples": n, "any_action_rate": (any_action / n) if n else 0.0, "agent_backend": agent_backend, "llm_model_id": llm_model_id if llm else None, "llm_calls": int(getattr(llm, "_calls", 0)) if llm else 0, "llm_failures": int(getattr(llm, "_failures", 0)) if llm else 0})
+    write_json(metrics_json, {"n_examples": n, "any_action_rate": (any_action / n) if n else 0.0, "agent_backend": agent_backend, "llm_model_id": llm_model_id if llm else None, "llm_calls": int(getattr(llm, "_calls", 0)) if llm else 0, "llm_failures": int(getattr(llm, "_failures", 0)) if llm else 0, "inference_context_schema": INFERENCE_CONTEXT_SCHEMA, "target_isolation_verified": True})
     log(f"Reasoner stage done: n={n}")
 
 
